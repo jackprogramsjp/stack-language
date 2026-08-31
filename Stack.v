@@ -98,6 +98,7 @@ Fixpoint stackEvalF
 Reserved Notation "p '/' st '==>' st'"
   (at level 40, st at level 39).
 
+  (* Propositions for big-step execution *)
 Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
 
   | E_Done : forall s f,
