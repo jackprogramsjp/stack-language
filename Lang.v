@@ -176,4 +176,118 @@ Proof.
     + apply multi_refl.
 Qed.
 
+(* Define value as a Rocq function *)
+(* Eventually, it will be a Fixpoint! *)
+Definition valuef (t : tm) : bool :=
+  match t with
+  | tm_nat _ => true
+  | tm_add t1 t2 => false
+  | tm_mul t1 t2 => false
+  end.
+
+(* Helper function for checking term is a value *)
+Definition assert (b : bool) (a : option tm) : option tm :=
+  if b then a else None.
+
+(* Operational semantics as a Rocq function *)
+Fixpoint stepf (t : tm) : option tm :=
+  match t with
+  | tm_nat _ => None (* because it is a number value *)
+
+  (* arithmetic operations *)
+  | tm_add t1 t2 =>
+    match stepf t1, stepf t2, t1, t2 with
+      | Some t1', _, _, _ => Some (tm_add t1' t2)
+      | None, Some t2', tm_nat n, _ => Some (tm_add (tm_nat n) t2')
+      | None, None, tm_nat n1, tm_nat n2 => Some (tm_nat (n1 + n2))
+      | _, _, _, _ => None
+    end
+  | tm_mul t1 t2 =>
+    match stepf t1, stepf t2, t1, t2 with
+      | Some t1', _, _, _ => Some (tm_mul t1' t2)
+      | None, Some t2', tm_nat n, _ => Some (tm_mul (tm_nat n) t2')
+      | None, None, tm_nat n1, tm_nat n2 => Some (tm_nat (n1 * n2))
+      | _, _, _, _ => None
+    end
+  end.
+
+Theorem small_step_fixpoint_correctness :
+  forall t t',
+    stepf t = Some t' <-> step t t'.
+Proof.
+  intros t t'.
+  split.
+  - (* functional -> relation *)
+    generalize dependent t'.
+    induction t; intros t' H.
+    + (* tm_nat *)
+      simpl in H.
+      inversion H.
+    + (* tm_add *)
+      destruct (stepf t1) eqn:H1.
+      
+      * (* t1 takes a step *)
+        simpl in H.
+        rewrite H1 in H.
+        inversion H.
+        apply ST_Add1.
+        apply IHt1.
+        reflexivity.
+      * (* t1 does not take a step *)
+        simpl in H.
+        rewrite H1 in H.
+        destruct (stepf t2) eqn:H2.
+        -- (* t2 takes a step *)
+           destruct t1 as [n1 | t11 t12 | t11 t12].
+           ++ (* t1 = tm_nat n1 *)
+              inversion H.
+              apply ST_Add2.
+              ** apply v_nat.
+              ** apply IHt2. reflexivity.
+           ++ (* t1 = tm_add ... *)
+              discriminate H.
+           ++ (* t1 = tm_mul ... *)
+              discriminate H.
+        -- (* neither t1 nor t2 steps *)
+           destruct t1 as [n1 | | ]; destruct t2 as [n2 | | ];
+           simpl in H; try discriminate H.
+           injection H as H; subst t'.
+           apply ST_AddNat. 
+    + (* tm_add *)
+      destruct (stepf t1) eqn:H1.
+      
+      * (* t1 takes a step *)
+        simpl in H.
+        rewrite H1 in H.
+        inversion H.
+        apply ST_Mult1.
+        apply IHt1.
+        reflexivity.
+      * (* t1 does not take a step *)
+        simpl in H.
+        rewrite H1 in H.
+        destruct (stepf t2) eqn:H2.
+        -- (* t2 takes a step *)
+           destruct t1 as [n1 | t11 t12 | t11 t12].
+           ++ (* t1 = tm_nat n1 *)
+              inversion H.
+              apply ST_Mult2.
+              ** apply v_nat.
+              ** apply IHt2. reflexivity.
+           ++ (* t1 = tm_add ... *)
+              discriminate H.
+           ++ (* t1 = tm_mul ... *)
+              discriminate H.
+        -- (* neither t1 nor t2 steps *)
+           destruct t1 as [n1 | | ]; destruct t2 as [n2 | | ];
+           simpl in H; try discriminate H.
+           injection H as H; subst t'.
+           apply ST_MultNat. 
+  - (* relation -> functional *)
+    intro H.
+    induction H; simpl; try reflexivity;
+    try rewrite IHstep; try reflexivity;
+    inversion H; subst; simpl; reflexivity.
+Qed.
+
 End Lang.
