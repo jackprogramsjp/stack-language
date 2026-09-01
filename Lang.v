@@ -213,6 +213,29 @@ Fixpoint stepf (t : tm) : option tm :=
     end
   end.
 
+(* Inversion lemma *)
+(* Lemma stepf_none_inv :
+  forall t,
+    stepf t = None ->
+    exists n, t = tm_nat n.
+Proof.
+  intros t H.
+  induction t as [n' | | ].
+  - (* tm_nat n *)
+    exists n'.
+    reflexivity.
+  - (* tm_add t1 t2 *)
+    simpl in H.
+    destruct (stepf t1) eqn:H1.
+    + (* t1 takes a step *)
+      discriminate H.
+    + (* t1 does not take a step *)
+      destruct H1 as [n1 ->].
+      destruct (stepf t2) eqn:H2.
+      * (* t2 takes a step *)
+        
+Qed. *)
+
 (* Prove that small-step evaluation and small-step relation coincides *)
 
 Theorem small_step_fixpoint_correctness :
