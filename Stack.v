@@ -53,44 +53,46 @@ Notation "x ; y" := (x ++ y)
 (* Direct interpreter / evaluation big-step *)
 Fixpoint stackEvalF
   (p : stackProgram)
-  (s : operandStack)
+  (st : vmState)
   : vmState :=
   match p with
-  | [] =>
-      {|
-        stack := s;
-        frame := [];
-      |}
+  | [] => st
 
   | instr :: rest =>
       match instr with
       | IPush n =>
-          stackEvalF rest (n :: s)
+          stackEvalF rest
+            {| stack := n :: st.(stack);
+               frame := st.(frame) |}
 
       | IPop =>
-          match s with
-          | [] => stackEvalF rest []
-          | _ :: s' => stackEvalF rest s'
+          match st.(stack) with
+          | [] =>
+              stackEvalF rest st
+          | _ :: s' =>
+              stackEvalF rest
+                {| stack := s';
+                   frame := st.(frame) |}
           end
 
       | IAdd =>
-          match s with
+          match st.(stack) with
           | x :: y :: s' =>
-              stackEvalF rest ((x + y) :: s')
-          | [] =>
-              stackEvalF rest []
-          | x :: [] =>
-              stackEvalF rest [x]
+              stackEvalF rest
+                {| stack := (x + y) :: s';
+                   frame := st.(frame) |}
+          | _ =>
+              stackEvalF rest st
           end
 
       | IMul =>
-          match s with
+          match st.(stack) with
           | x :: y :: s' =>
-              stackEvalF rest ((x * y) :: s')
-          | [] =>
-              stackEvalF rest []
-          | x :: [] =>
-              stackEvalF rest [x]
+              stackEvalF rest
+                {| stack := (x * y) :: s';
+                   frame := st.(frame) |}
+          | _ =>
+              stackEvalF rest st
           end
       end
   end.
@@ -148,6 +150,56 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
         {| stack := x :: y :: s;
            frame := f |}
       ==> st'
+  
+  | E_PopEmpty : forall rest f st',
+      rest /
+        {| stack := [];
+          frame := f |}
+      ==> st' ->
+      (IPop :: rest) /
+        {| stack := [];
+          frame := f |}
+      ==> st'
+
+  | E_AddEmpty : forall rest f st',
+      rest /
+        {| stack := [];
+          frame := f |}
+      ==> st' ->
+      (IAdd :: rest) /
+        {| stack := [];
+          frame := f |}
+      ==> st'
+
+  | E_AddOne : forall x rest f st',
+      rest /
+        {| stack := [x];
+          frame := f |}
+      ==> st' ->
+      (IAdd :: rest) /
+        {| stack := [x];
+          frame := f |}
+      ==> st'
+
+  | E_MulEmpty : forall rest f st',
+      rest /
+        {| stack := [];
+          frame := f |}
+      ==> st' ->
+      (IMul :: rest) /
+        {| stack := [];
+          frame := f |}
+      ==> st'
+
+  | E_MulOne : forall x rest f st',
+      rest /
+        {| stack := [x];
+          frame := f |}
+      ==> st' ->
+      (IMul :: rest) /
+        {| stack := [x];
+          frame := f |}
+      ==> st'
 
 where "p '/' st '==>' st'" := (stackExecute p st st').
 
@@ -189,4 +241,58 @@ Proof.
   apply E_Add.
   apply E_Add.
   apply E_Done.
+Qed.
+
+Theorem big_step_fixpoint_correctness :
+  forall p si sf,
+    stackEvalF p si = sf <->
+    p / si ==> sf.
+Proof.
+  intros p si sf.
+  split.
+  - (* functional -> relational *)
+    generalize dependent si.
+    generalize dependent sf.
+    induction p as [| instr rest IH]; intros sf si H.
+    + simpl in H.
+      subst sf.
+      destruct si as [s f].
+      apply E_Done.
+    + destruct instr.
+      * (* IPush *)
+        apply IH in H.
+        destruct si.
+        apply E_Push.
+        simpl in H.
+        apply IH.
+        assumption.
+      * (* IPop *)
+        destruct si.
+        destruct stack0; simpl in H; apply IH in H.
+        1: apply E_PopEmpty.
+        2: apply E_Pop.
+        all: assumption.
+      * (* IAdd *)
+        destruct si as [s f].
+        destruct s as [| n s'].
+        -- apply E_AddEmpty.
+           apply IH in H.
+           assumption.
+        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
+           1: apply E_AddOne.
+           2: apply E_Add.
+           all: assumption.
+      * (* IMul *)
+        destruct si as [s f].
+        destruct s as [| n s'].
+        -- apply E_MulEmpty.
+           apply IH in H.
+           assumption.
+        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
+           1: apply E_MulOne.
+           2: apply E_Mul.
+           all: assumption.
+  - (* relational -> functional *)
+    intro H.
+    induction H; simpl; try reflexivity; try assumption.
 Qed.
