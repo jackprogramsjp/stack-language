@@ -264,7 +264,6 @@ Proof.
         destruct si.
         apply E_Push.
         simpl in H.
-        apply IH.
         assumption.
       * (* IPop *)
         destruct si.

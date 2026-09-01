@@ -302,5 +302,47 @@ Fixpoint compile (t : tm) : stackProgram :=
   | tm_mul t1 t2 => compile t1 ++ compile t2 ++ [IMul]
   end.
 
+(* Lemma, proving that one source step does not change the compiled behavior *)
+Lemma compile_step_preservation :
+  forall t t',
+    step t t' ->
+    forall st,
+      stackEvalF (compile t) st =
+      stackEvalF (compile t') st.
+Proof.
+  intros t t' H.
+  induction H; intros st.
+  - (* ST_Mult1 *)
+    simpl.
+    rewrite stackEvalF_app. (* Can definitely do repeat rewrite as well *)
+    rewrite IHstep.
+    rewrite <- stackEvalF_app.
+    reflexivity.
+Admitted.
+
+(* (2 * 3) --> 6 *)
+Example compile_step_example :
+  stackEvalF
+    (compile (tm_mul (tm_nat 2) (tm_nat 3)))
+    {| stack := []; frame := [] |}
+  =
+  stackEvalF
+    (compile (tm_nat 6))
+    {| stack := []; frame := [] |}.
+Proof.
+  apply compile_step_preservation.
+  apply ST_MultNat.
+Qed.
+
+Lemma compile_multistep_preservation :
+  forall t t',
+    multistep t t' ->
+    forall st,
+      stackEvalF (compile t) st =
+      stackEvalF (compile t') st.
+Proof.
+  intros t t' H.
+  induction H as [x | x y z Hxy Hyz IH].
+Admitted.
 
 End Lang.
