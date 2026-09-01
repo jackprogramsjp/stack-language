@@ -1,6 +1,8 @@
 From SL Require Import Maps.
 From SL Require Import Stack.
 From Stdlib Require Import Strings.String.
+From Coq Require Import Lists.List.
+Import ListNotations.
 
 Module Lang.
 
@@ -211,6 +213,8 @@ Fixpoint stepf (t : tm) : option tm :=
     end
   end.
 
+(* Prove that small-step evaluation and small-step relation coincides *)
+
 Theorem small_step_fixpoint_correctness :
   forall t t',
     stepf t = Some t' <-> step t t'.
@@ -289,5 +293,14 @@ Proof.
     try rewrite IHstep; try reflexivity;
     inversion H; subst; simpl; reflexivity.
 Qed.
+
+(* Compilation from Language to Stack instructions *)
+Fixpoint compile (t : tm) : stackProgram :=
+  match t with
+  | tm_nat n => [IPush n]
+  | tm_add t1 t2 => compile t1 ++ compile t2 ++ [IAdd]
+  | tm_mul t1 t2 => compile t1 ++ compile t2 ++ [IMul]
+  end.
+
 
 End Lang.

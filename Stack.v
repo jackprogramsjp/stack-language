@@ -296,3 +296,22 @@ Proof.
     intro H.
     induction H; simpl; try reflexivity; try assumption.
 Qed.
+
+(* Lemma about stack programs concatenated *)
+Lemma stackEvalF_app :
+  forall p1 p2 st,
+    stackEvalF (p1 ++ p2) st =
+    stackEvalF p2 (stackEvalF p1 st).
+Proof.
+  induction p1 as [| i p1 IH]; intros p2 [s f].
+  - reflexivity.
+  - destruct i; simpl.
+    + apply IH.
+    + destruct s; apply IH.
+    + destruct s as [| n s'].
+      * apply IH.
+      * destruct s' as [| n' s'']; apply IH.
+    + destruct s as [| n s'].
+      * apply IH.
+      * destruct s' as [| n' s'']; apply IH.
+Qed.
