@@ -368,4 +368,14 @@ Proof.
   induction H as [x | x y z Hxy Hyz IH].
 Admitted.
 
+Theorem compiler_semantic_preservation :
+  forall t n,
+    multistep t (tm_nat n) ->
+    forall st,
+      stackEvalF (compile t) st =
+      stackEvalF [IPush n] st.
+Proof.
+  intros t n H st.
+Admitted.
+
 End Lang.
