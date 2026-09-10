@@ -341,7 +341,31 @@ Proof.
     rewrite IHstep.
     rewrite <- stackEvalF_app.
     reflexivity.
-Admitted.
+  - (* ST_Mult2 *)
+    simpl.
+    repeat rewrite stackEvalF_app.
+    rewrite IHstep.
+    reflexivity.
+  - (* ST_MultNat *)
+    simpl.
+    rewrite PeanoNat.Nat.mul_comm.
+    reflexivity.
+  - (* ST_Add1 *)
+    simpl.
+    rewrite stackEvalF_app. (* Can definitely do repeat rewrite as well *)
+    rewrite IHstep.
+    rewrite <- stackEvalF_app.
+    reflexivity.
+  - (* ST_Add2 *)
+    simpl.
+    repeat rewrite stackEvalF_app.
+    rewrite IHstep.
+    reflexivity.
+  - (* ST_AddNat *)
+    simpl.
+    rewrite PeanoNat.Nat.add_comm.
+    reflexivity.
+Qed.
 
 (* (2 * 3) --> 6 *)
 Example compile_step_example :
@@ -366,7 +390,12 @@ Lemma compile_multistep_preservation :
 Proof.
   intros t t' H.
   induction H as [x | x y z Hxy Hyz IH].
-Admitted.
+  - reflexivity.
+  - intros st.
+    rewrite <- IH.
+    apply compile_step_preservation.
+    assumption.
+Qed.
 
 Theorem compiler_semantic_preservation :
   forall t n,
@@ -376,6 +405,8 @@ Theorem compiler_semantic_preservation :
       stackEvalF [IPush n] st.
 Proof.
   intros t n H st.
-Admitted.
+  rewrite (compile_multistep_preservation t (tm_nat n) H st).
+  reflexivity.
+Qed.
 
 End Lang.
