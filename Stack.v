@@ -10,12 +10,27 @@ Definition operandStack := list nat.
 (* Frame array which is space for long-term storage *)
 Definition frameArray := list nat.
 
+(* Binary operations *)
+Inductive binOp : Type :=
+  | OpAdd
+  | OpSub
+  | OpMul
+  | OpDiv.
+
+(* Evaluator for numbers *)
+Definition evalBinOp (op : binOp) (x y : nat) : nat :=
+  match op with
+  | OpAdd => x + y
+  | OpSub => x - y
+  | OpMul => x * y
+  | OpDiv => Nat.div x y
+  end.
+
 (* Imperative commands for the stack state *)
 Inductive stackInstr : Type :=
   | IPush : nat -> stackInstr                       (* PUSH X:NAT *)
   | IPop : stackInstr                               (* POP *)
-  | IAdd : stackInstr                               (* ADD *)
-  | IMul : stackInstr                               (* MUL *)
+  | IBinOp : binOp -> stackInstr                    (* BINOP *)
   .
 
 (* Stack program *)
@@ -40,10 +55,16 @@ Notation "'PUSH' n" := ([IPush n])
 Notation "'POP'" := ([IPop])
   (in custom stack at level 0).
 
-Notation "'ADD'" := ([IAdd])
+Notation "'ADD'" := ([IBinOp OpAdd])
   (in custom stack at level 0).
 
-Notation "'MUL'" := ([IMul])
+Notation "'SUB'" := ([IBinOp OpSub])
+  (in custom stack at level 0).
+
+Notation "'MUL'" := ([IBinOp OpMul])
+  (in custom stack at level 0).
+
+Notation "'DIV'" := ([IBinOp OpDiv])
   (in custom stack at level 0).
 
 Notation "x ; y" := (x ++ y)
@@ -74,22 +95,12 @@ Fixpoint stackEvalF
                 {| stack := s';
                    frame := st.(frame) |}
           end
-
-      | IAdd =>
+      
+      | IBinOp op =>
           match st.(stack) with
           | x :: y :: s' =>
               stackEvalF rest
-                {| stack := (x + y) :: s';
-                   frame := st.(frame) |}
-          | _ =>
-              stackEvalF rest st
-          end
-
-      | IMul =>
-          match st.(stack) with
-          | x :: y :: s' =>
-              stackEvalF rest
-                {| stack := (x * y) :: s';
+                {| stack := (evalBinOp op x y) :: s';
                    frame := st.(frame) |}
           | _ =>
               stackEvalF rest st
@@ -131,22 +142,12 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
            frame := f |}
       ==> st'
 
-  | E_Add : forall x y s rest f st',
+  | E_BinOp : forall op x y s rest f st',
       rest /
-        {| stack := (x + y) :: s;
+        {| stack := (evalBinOp op x y) :: s;
            frame := f |}
       ==> st' ->
-      (IAdd :: rest) /
-        {| stack := x :: y :: s;
-           frame := f |}
-      ==> st'
-
-  | E_Mul : forall x y s rest f st',
-      rest /
-        {| stack := (x * y) :: s;
-           frame := f |}
-      ==> st' ->
-      (IMul :: rest) /
+      (IBinOp op :: rest) /
         {| stack := x :: y :: s;
            frame := f |}
       ==> st'
@@ -161,42 +162,22 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
           frame := f |}
       ==> st'
 
-  | E_AddEmpty : forall rest f st',
+  | E_BinOpEmpty : forall op rest f st',
       rest /
         {| stack := [];
           frame := f |}
       ==> st' ->
-      (IAdd :: rest) /
-        {| stack := [];
-          frame := f |}
-      ==> st'
-
-  | E_AddOne : forall x rest f st',
-      rest /
-        {| stack := [x];
-          frame := f |}
-      ==> st' ->
-      (IAdd :: rest) /
-        {| stack := [x];
-          frame := f |}
-      ==> st'
-
-  | E_MulEmpty : forall rest f st',
-      rest /
-        {| stack := [];
-          frame := f |}
-      ==> st' ->
-      (IMul :: rest) /
+      (IBinOp op :: rest) /
         {| stack := [];
           frame := f |}
       ==> st'
 
-  | E_MulOne : forall x rest f st',
+  | E_BinOpOne : forall op x rest f st',
       rest /
         {| stack := [x];
           frame := f |}
       ==> st' ->
-      (IMul :: rest) /
+      (IBinOp op :: rest) /
         {| stack := [x];
           frame := f |}
       ==> st'
@@ -213,7 +194,7 @@ Example test_big_step_1 :
 Proof.
   apply E_Push.
   apply E_Push.
-  apply E_Add.
+  apply E_BinOp.
   apply E_Done.
 Qed.
 
@@ -237,9 +218,9 @@ Proof.
   apply E_Push.
   apply E_Push.
   apply E_Push.
-  apply E_Mul.
-  apply E_Add.
-  apply E_Add.
+  apply E_BinOp.
+  apply E_BinOp.
+  apply E_BinOp.
   apply E_Done.
 Qed.
 
@@ -271,25 +252,15 @@ Proof.
         1: apply E_PopEmpty.
         2: apply E_Pop.
         all: assumption.
-      * (* IAdd *)
+      * (* IBinOp *)
         destruct si as [s f].
         destruct s as [| n s'].
-        -- apply E_AddEmpty.
+        -- apply E_BinOpEmpty.
            apply IH in H.
            assumption.
         -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
-           1: apply E_AddOne.
-           2: apply E_Add.
-           all: assumption.
-      * (* IMul *)
-        destruct si as [s f].
-        destruct s as [| n s'].
-        -- apply E_MulEmpty.
-           apply IH in H.
-           assumption.
-        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
-           1: apply E_MulOne.
-           2: apply E_Mul.
+           1: apply E_BinOpOne.
+           2: apply E_BinOp.
            all: assumption.
   - (* relational -> functional *)
     intro H.
@@ -307,9 +278,6 @@ Proof.
   - destruct i; simpl.
     + apply IH.
     + destruct s; apply IH.
-    + destruct s as [| n s'].
-      * apply IH.
-      * destruct s' as [| n' s'']; apply IH.
     + destruct s as [| n s'].
       * apply IH.
       * destruct s' as [| n' s'']; apply IH.
