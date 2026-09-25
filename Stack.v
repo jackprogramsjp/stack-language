@@ -4,11 +4,29 @@
 From Coq Require Import Lists.List.
 Import ListNotations.
 
+(* Types *)
+Inductive ty :=
+  | TNat
+  | TBool
+  | TRef : ty -> ty.
+
+(* Heap addresses. *)
+Definition addr := nat.
+
+(* Runtime values *)
+Inductive value : Type :=
+  | VNat  : nat -> value
+  | VBool : bool -> value
+  | VRef  : addr -> value.
+
 (* Operand stack where it's a list of natural numbers *)
-Definition operandStack := list nat.
+Definition operandStack := list value.
 
 (* Frame array which is space for long-term storage *)
-Definition frameArray := list nat.
+Definition frameArray := list value.
+
+(* Heap maps addresses to values. *)
+Definition heap := list value.
 
 (* Binary operations *)
 Inductive binOp : Type :=
@@ -28,20 +46,25 @@ Definition evalBinOp (op : binOp) (x y : nat) : nat :=
 
 (* Imperative commands for the stack state *)
 Inductive stackInstr : Type :=
-  | IPush : nat -> stackInstr                       (* PUSH X:NAT *)
+  | IPush : value -> stackInstr                       (* PUSH X:NAT *)
   | IPop : stackInstr                               (* POP *)
   | IBinOp : binOp -> stackInstr                    (* BINOP *)
   | IDup : stackInstr                               (* DUP *)
   | ISwap : stackInstr                              (* SWAP *)
-  .
+
+  (* Heap operations *)
+  | IAlloc : stackInstr
+  | ILoad  : stackInstr
+  | IStore : stackInstr.
 
 (* Stack program *)
 Definition stackProgram := list stackInstr.
 
 (* The actual virtual machine state *)
 Record vmState := {
-  stack : operandStack;
-  frame : frameArray
+  stack   : operandStack;
+  frame   : frameArray;
+  mem     : heap
 }.
 
 (* Defin notations *)
@@ -50,9 +73,9 @@ Declare Custom Entry stack.
 Notation "<<{ p }>>" := p
   (p custom stack at level 99).
 
-Notation "'PUSH' n" := ([IPush n])
+Notation "'PUSH' v" := ([IPush v])
   (in custom stack at level 0,
-   n constr at level 0).
+   v constr at level 0).
 
 Notation "'POP'" := ([IPop])
   (in custom stack at level 0).
@@ -75,192 +98,266 @@ Notation "'DUP'" := ([IDup])
 Notation "'SWAP'" := ([ISwap])
   (in custom stack at level 0).
 
+Notation "'ALLOC'" := ([IAlloc])
+  (in custom stack at level 0).
+
+Notation "'LOAD'" := ([ILoad])
+  (in custom stack at level 0).
+
+Notation "'STORE'" := ([IStore])
+  (in custom stack at level 0).
+
 Notation "x ; y" := (x ++ y)
   (in custom stack at level 80,
    right associativity).
+
+(* Errors defined by VM *)
+Inductive runtimeError : Type :=
+  | EDivByZero
+  | EInvalidAddress.
+
+(*  *)
+Inductive stuckReason : Type :=
+  | STypeMismatch
+  | SStackUnderflow.
+
+(* Result of terminating execution. *)
+Inductive stackExecuteResult : Type :=
+  | RState : vmState -> stackExecuteResult
+  | RError : runtimeError -> stackExecuteResult
+  | RStuck : stuckReason -> stackExecuteResult.
 
 (* Direct interpreter / evaluation big-step *)
 Fixpoint stackEvalF
   (p : stackProgram)
   (st : vmState)
-  : vmState :=
+  : stackExecuteResult :=
   match p with
-  | [] => st
+  | [] =>
+      RState st
 
   | instr :: rest =>
       match instr with
-      | IPush n =>
+
+      | IPush v =>
           stackEvalF rest
-            {| stack := n :: st.(stack);
-               frame := st.(frame) |}
+            {| stack := v :: st.(stack);
+               frame := st.(frame);
+               mem := st.(mem) |}
 
       | IPop =>
           match st.(stack) with
           | [] =>
-              stackEvalF rest st
+              RStuck SStackUnderflow
           | _ :: s' =>
               stackEvalF rest
                 {| stack := s';
-                   frame := st.(frame) |}
+                   frame := st.(frame);
+                   mem := st.(mem) |}
           end
-      
+
       | IBinOp op =>
           match st.(stack) with
-          | x :: y :: s' =>
-              stackEvalF rest
-                {| stack := (evalBinOp op y x) :: s';
-                   frame := st.(frame) |}
+          | VNat x :: VNat y :: s' =>
+              match op with
+              | OpDiv =>
+                  match x with
+                  | 0 =>
+                      RError EDivByZero
+                  | S _ =>
+                      stackEvalF rest
+                        {| stack := VNat (Nat.div y x) :: s';
+                           frame := st.(frame);
+                           mem := st.(mem) |}
+                  end
+
+              | _ =>
+                  stackEvalF rest
+                    {| stack := VNat (evalBinOp op y x) :: s';
+                       frame := st.(frame);
+                       mem := st.(mem) |}
+              end
+
           | _ =>
-              stackEvalF rest st
+              RStuck STypeMismatch
           end
-        
+
       | IDup =>
           match st.(stack) with
           | [] =>
-              stackEvalF rest st
+              RStuck SStackUnderflow
           | v :: s' =>
               stackEvalF rest
-                {| stack := v :: st.(stack);
-                   frame := st.(frame) |}
+                {| stack := v :: v :: s';
+                   frame := st.(frame);
+                   mem := st.(mem) |}
           end
-      
+
       | ISwap =>
           match st.(stack) with
           | x :: y :: s' =>
               stackEvalF rest
                 {| stack := y :: x :: s';
-                   frame := st.(frame) |}
+                   frame := st.(frame);
+                   mem := st.(mem) |}
           | _ =>
-              stackEvalF rest st
+              RStuck SStackUnderflow
           end
+
+      | IAlloc =>
+          (* implement later *)
+          RError EInvalidAddress
+
+      | ILoad =>
+          (* implement later *)
+          RError EInvalidAddress
+
+      | IStore =>
+          (* implement later *)
+          RError EInvalidAddress
       end
   end.
 
 Reserved Notation "p '/' st '==>' st'"
   (at level 40, st at level 39).
 
-  (* Propositions for big-step execution *)
-Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
+(* Propositions for big-step execution *)
+Inductive stackExecute :
+  stackProgram -> vmState -> stackExecuteResult -> Prop :=
 
-  | E_Done : forall s f,
-      [] /
-        {| stack := s;
-           frame := f |}
-      ==>
-        {| stack := s;
-           frame := f |}
+  (* Finished program*)
+  | E_Done :
+      forall st,
+        [] / st ==> RState st
 
-  | E_Push : forall n rest s f st',
-      rest /
-        {| stack := n :: s;
-           frame := f |}
-      ==> st' ->
-      (IPush n :: rest) /
-        {| stack := s;
-           frame := f |}
-      ==> st'
+  (* PUSH *)
+  | E_Push :
+      forall v rest s f h r,
+        rest /
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IPush v :: rest) /
+          {| stack := s;
+             frame := f;
+             mem := h |}
+        ==> r
 
-  | E_Pop : forall x s rest f st',
-      rest /
-        {| stack := s;
-           frame := f |}
-      ==> st' ->
-      (IPop :: rest) /
-        {| stack := x :: s;
-           frame := f |}
-      ==> st'
+  (* POP *)
+  | E_Pop :
+      forall v s rest f h r,
+        rest /
+          {| stack := s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IPop :: rest) /
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+        ==> r
 
-  | E_BinOp : forall op x y s rest f st',
-      rest /
-        {| stack := (evalBinOp op x y) :: s;
-           frame := f |}
-      ==> st' ->
-      (IBinOp op :: rest) /
-        {| stack := x :: y :: s;
-           frame := f |}
-      ==> st'
-  
-  | E_Dup : forall x s rest f st',
-      rest /
-        {| stack := x :: x :: s;
-           frame := f |}
-      ==> st' ->
-      (IDup :: rest) /
-        {| stack := x :: s;
-           frame := f |}
-      ==> st'
-  
-  | E_Swap : forall x y s rest f st',
-      rest /
-        {| stack := y :: x :: s;
-           frame := f |}
-      ==> st' ->
-      (ISwap :: rest) /
-        {| stack := x :: y :: s;
-           frame := f |}
-      ==> st'
-  
-  | E_PopEmpty : forall rest f st',
-      rest /
-        {| stack := [];
-          frame := f |}
-      ==> st' ->
-      (IPop :: rest) /
-        {| stack := [];
-          frame := f |}
-      ==> st'
+  (* DUP *)
+  | E_Dup :
+      forall v s rest f h r,
+        rest /
+          {| stack := v :: v :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IDup :: rest) /
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+        ==> r
 
-  | E_BinOpEmpty : forall op rest f st',
-      rest /
-        {| stack := [];
-          frame := f |}
-      ==> st' ->
-      (IBinOp op :: rest) /
-        {| stack := [];
-          frame := f |}
-      ==> st'
-  
-  | E_DupEmpty : forall rest f st',
-      rest /
-        {| stack := [];
-          frame := f |}
-      ==> st' ->
-      (IDup :: rest) /
-        {| stack := [];
-          frame := f |}
-      ==> st'
-  
-  | E_SwapEmpty : forall rest f st',
-      rest /
-        {| stack := [];
-          frame := f |}
-      ==> st' ->
-      (ISwap :: rest) /
-        {| stack := [];
-          frame := f |}
-      ==> st'
+  (* SWAP *)
+  | E_Swap :
+      forall x y s rest f h r,
+        rest /
+          {| stack := y :: x :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (ISwap :: rest) /
+          {| stack := x :: y :: s;
+             frame := f;
+             mem := h |}
+        ==> r
 
-  | E_BinOpOne : forall op x rest f st',
-      rest /
-        {| stack := [x];
-          frame := f |}
-      ==> st' ->
-      (IBinOp op :: rest) /
-        {| stack := [x];
-          frame := f |}
-      ==> st'
-  
-  | E_SwapOne : forall x rest f st',
-      rest /
-        {| stack := [x];
-          frame := f |}
-      ==> st' ->
-      (ISwap :: rest) /
-        {| stack := [x];
-          frame := f |}
-      ==> st'
+  (* ADD *)
+  | E_Add :
+      forall x y s rest f h r,
+        rest /
+          {| stack := VNat (y + x) :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IBinOp OpAdd :: rest) /
+          {| stack := VNat x :: VNat y :: s;
+             frame := f;
+             mem := h |}
+        ==> r
 
-where "p '/' st '==>' st'" := (stackExecute p st st').
+  (* SUB *)
+  | E_Sub :
+      forall x y s rest f h r,
+        rest /
+          {| stack := VNat (y - x) :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IBinOp OpSub :: rest) /
+          {| stack := VNat x :: VNat y :: s;
+             frame := f;
+             mem := h |}
+        ==> r
+
+  (* MUL *)
+  | E_Mul :
+      forall x y s rest f h r,
+        rest /
+          {| stack := VNat (y * x) :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IBinOp OpMul :: rest) /
+          {| stack := VNat x :: VNat y :: s;
+             frame := f;
+             mem := h |}
+        ==> r
+
+  (* DIV with a valid denominator *)
+  | E_Div :
+      forall x y s rest f h r,
+        x <> 0 ->
+        rest /
+          {| stack := VNat (Nat.div y x) :: s;
+             frame := f;
+             mem := h |}
+        ==> r ->
+        (IBinOp OpDiv :: rest) /
+          {| stack := VNat x :: VNat y :: s;
+             frame := f;
+             mem := h |}
+        ==> r
+
+  (* DIV with runtime error *)
+  | E_DivZero :
+      forall y s rest f h,
+        (IBinOp OpDiv :: rest) /
+          {| stack := VNat 0 :: VNat y :: s;
+             frame := f;
+             mem := h |}
+        ==> RError EDivByZero
+
+where "p '/' st '==>' r" := (stackExecute p st r).
+
+(* CoInductive stackExecuteDiverges :
+    stackProgram -> vmState -> Prop :=
+  ...
+. *)
 
 Example test_big_step_1 :
   <<{ PUSH 2; PUSH 5; ADD }>> /
