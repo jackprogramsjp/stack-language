@@ -108,7 +108,7 @@ Fixpoint stackEvalF
           match st.(stack) with
           | x :: y :: s' =>
               stackEvalF rest
-                {| stack := (evalBinOp op x y) :: s';
+                {| stack := (evalBinOp op y x) :: s';
                    frame := st.(frame) |}
           | _ =>
               stackEvalF rest st
