@@ -31,6 +31,8 @@ Inductive stackInstr : Type :=
   | IPush : nat -> stackInstr                       (* PUSH X:NAT *)
   | IPop : stackInstr                               (* POP *)
   | IBinOp : binOp -> stackInstr                    (* BINOP *)
+  | IDup : stackInstr                               (* DUP *)
+  | ISwap : stackInstr                              (* SWAP *)
   .
 
 (* Stack program *)
@@ -67,6 +69,12 @@ Notation "'MUL'" := ([IBinOp OpMul])
 Notation "'DIV'" := ([IBinOp OpDiv])
   (in custom stack at level 0).
 
+Notation "'DUP'" := ([IDup])
+  (in custom stack at level 0).
+
+Notation "'SWAP'" := ([ISwap])
+  (in custom stack at level 0).
+
 Notation "x ; y" := (x ++ y)
   (in custom stack at level 80,
    right associativity).
@@ -101,6 +109,26 @@ Fixpoint stackEvalF
           | x :: y :: s' =>
               stackEvalF rest
                 {| stack := (evalBinOp op x y) :: s';
+                   frame := st.(frame) |}
+          | _ =>
+              stackEvalF rest st
+          end
+        
+      | IDup =>
+          match st.(stack) with
+          | [] =>
+              stackEvalF rest st
+          | v :: s' =>
+              stackEvalF rest
+                {| stack := v :: st.(stack);
+                   frame := st.(frame) |}
+          end
+      
+      | ISwap =>
+          match st.(stack) with
+          | x :: y :: s' =>
+              stackEvalF rest
+                {| stack := y :: x :: s';
                    frame := st.(frame) |}
           | _ =>
               stackEvalF rest st
@@ -152,6 +180,26 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
            frame := f |}
       ==> st'
   
+  | E_Dup : forall x s rest f st',
+      rest /
+        {| stack := x :: x :: s;
+           frame := f |}
+      ==> st' ->
+      (IDup :: rest) /
+        {| stack := x :: s;
+           frame := f |}
+      ==> st'
+  
+  | E_Swap : forall x y s rest f st',
+      rest /
+        {| stack := y :: x :: s;
+           frame := f |}
+      ==> st' ->
+      (ISwap :: rest) /
+        {| stack := x :: y :: s;
+           frame := f |}
+      ==> st'
+  
   | E_PopEmpty : forall rest f st',
       rest /
         {| stack := [];
@@ -171,6 +219,26 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
         {| stack := [];
           frame := f |}
       ==> st'
+  
+  | E_DupEmpty : forall rest f st',
+      rest /
+        {| stack := [];
+          frame := f |}
+      ==> st' ->
+      (IDup :: rest) /
+        {| stack := [];
+          frame := f |}
+      ==> st'
+  
+  | E_SwapEmpty : forall rest f st',
+      rest /
+        {| stack := [];
+          frame := f |}
+      ==> st' ->
+      (ISwap :: rest) /
+        {| stack := [];
+          frame := f |}
+      ==> st'
 
   | E_BinOpOne : forall op x rest f st',
       rest /
@@ -178,6 +246,16 @@ Inductive stackExecute : stackProgram -> vmState -> vmState -> Prop :=
           frame := f |}
       ==> st' ->
       (IBinOp op :: rest) /
+        {| stack := [x];
+          frame := f |}
+      ==> st'
+  
+  | E_SwapOne : forall x rest f st',
+      rest /
+        {| stack := [x];
+          frame := f |}
+      ==> st' ->
+      (ISwap :: rest) /
         {| stack := [x];
           frame := f |}
       ==> st'
@@ -224,6 +302,32 @@ Proof.
   apply E_Done.
 Qed.
 
+Example test_big_step_3 :
+  <<{
+    PUSH 5;
+    PUSH 10;
+    ADD;
+    PUSH 20;
+    SWAP;
+    DUP;
+    ADD
+  }>> /
+    {| stack := [];
+       frame := [] |}
+  ==>
+    {| stack := [30; 20];
+       frame := [] |}.
+Proof.
+  apply E_Push.
+  apply E_Push.
+  apply E_BinOp.
+  apply E_Push.
+  apply E_Swap.
+  apply E_Dup.
+  apply E_BinOp.
+  apply E_Done.
+Qed.
+
 Theorem big_step_fixpoint_correctness :
   forall p si sf,
     stackEvalF p si = sf <->
@@ -262,6 +366,22 @@ Proof.
            1: apply E_BinOpOne.
            2: apply E_BinOp.
            all: assumption.
+      * (* IDup *)
+        destruct si.
+        destruct stack0; simpl in H; apply IH in H.
+        1: apply E_DupEmpty.
+        2: apply E_Dup.
+        all: assumption.
+      * (* ISwap *)
+        destruct si as [s f].
+        destruct s as [| n s'].
+        -- apply E_SwapEmpty.
+           apply IH in H.
+           assumption.
+        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
+           1: apply E_SwapOne.
+           2: apply E_Swap.
+           all: assumption.
   - (* relational -> functional *)
     intro H.
     induction H; simpl; try reflexivity; try assumption.
@@ -278,6 +398,12 @@ Proof.
   - destruct i; simpl.
     + apply IH.
     + destruct s; apply IH.
+    + destruct s as [| n s'].
+      * apply IH.
+      * destruct s' as [| n' s'']; apply IH.
+    + destruct s as [| n s'].
+      * apply IH.
+      * destruct s' as [| n' s'']; apply IH.
     + destruct s as [| n s'].
       * apply IH.
       * destruct s' as [| n' s'']; apply IH.
