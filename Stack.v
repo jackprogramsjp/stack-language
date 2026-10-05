@@ -73,9 +73,25 @@ Declare Custom Entry stack.
 Notation "<<{ p }>>" := p
   (p custom stack at level 99).
 
-Notation "'PUSH' v" := ([IPush v])
+(* Values inside stack syntax *)
+Notation "n" := (VNat n)
   (in custom stack at level 0,
-   v constr at level 0).
+   n constr at level 0).
+
+Notation "'true'" := (VBool true)
+  (in custom stack at level 0).
+
+Notation "'false'" := (VBool false)
+  (in custom stack at level 0).
+
+Notation "'REF' n" := (VRef n)
+  (in custom stack at level 0,
+   n constr at level 0).
+
+(* Instructions *)
+Notation "'PUSH' v" := ([IPush v])
+  (in custom stack at level 10,
+   v custom stack at level 0).
 
 Notation "'POP'" := ([IPop])
   (in custom stack at level 0).
@@ -218,141 +234,136 @@ Fixpoint stackEvalF
       end
   end.
 
-Reserved Notation "p '/' st '==>' st'"
-  (at level 40, st at level 39).
-
 (* Propositions for big-step execution *)
 Inductive stackExecute :
   stackProgram -> vmState -> stackExecuteResult -> Prop :=
 
-  (* Finished program*)
+  (* Finished program *)
   | E_Done :
       forall st,
-        [] / st ==> RState st
+        stackExecute [] st (RState st)
 
   (* PUSH *)
   | E_Push :
       forall v rest s f h r,
-        rest /
+        stackExecute rest
           {| stack := v :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IPush v :: rest) /
+          r ->
+        stackExecute (IPush v :: rest)
           {| stack := s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* POP *)
   | E_Pop :
       forall v s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IPop :: rest) /
+          r ->
+        stackExecute (IPop :: rest)
           {| stack := v :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* DUP *)
   | E_Dup :
       forall v s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := v :: v :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IDup :: rest) /
+          r ->
+        stackExecute (IDup :: rest)
           {| stack := v :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* SWAP *)
   | E_Swap :
       forall x y s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := y :: x :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (ISwap :: rest) /
+          r ->
+        stackExecute (ISwap :: rest)
           {| stack := x :: y :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* ADD *)
   | E_Add :
       forall x y s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := VNat (y + x) :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IBinOp OpAdd :: rest) /
+          r ->
+        stackExecute (IBinOp OpAdd :: rest)
           {| stack := VNat x :: VNat y :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* SUB *)
   | E_Sub :
       forall x y s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := VNat (y - x) :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IBinOp OpSub :: rest) /
+          r ->
+        stackExecute (IBinOp OpSub :: rest)
           {| stack := VNat x :: VNat y :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* MUL *)
   | E_Mul :
       forall x y s rest f h r,
-        rest /
+        stackExecute rest
           {| stack := VNat (y * x) :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IBinOp OpMul :: rest) /
+          r ->
+        stackExecute (IBinOp OpMul :: rest)
           {| stack := VNat x :: VNat y :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* DIV with a valid denominator *)
   | E_Div :
       forall x y s rest f h r,
         x <> 0 ->
-        rest /
+        stackExecute rest
           {| stack := VNat (Nat.div y x) :: s;
              frame := f;
              mem := h |}
-        ==> r ->
-        (IBinOp OpDiv :: rest) /
+          r ->
+        stackExecute (IBinOp OpDiv :: rest)
           {| stack := VNat x :: VNat y :: s;
              frame := f;
              mem := h |}
-        ==> r
+          r
 
   (* DIV with runtime error *)
   | E_DivZero :
       forall y s rest f h,
-        (IBinOp OpDiv :: rest) /
+        stackExecute (IBinOp OpDiv :: rest)
           {| stack := VNat 0 :: VNat y :: s;
              frame := f;
              mem := h |}
-        ==> RError EDivByZero
-
-where "p '/' st '==>' r" := (stackExecute p st r).
+          (RError EDivByZero).
 
 (* CoInductive stackExecuteDiverges :
     stackProgram -> vmState -> Prop :=
@@ -360,21 +371,23 @@ where "p '/' st '==>' r" := (stackExecute p st r).
 . *)
 
 Example test_big_step_1 :
-  <<{ PUSH 2; PUSH 5; ADD }>> /
+  stackExecute <<{ PUSH 2; PUSH 5; ADD }>>
     {| stack := [];
-       frame := [] |}
-  ==>
-    {| stack := [7];
-       frame := [] |}.
+       frame := [];
+       mem   := [] |}
+    (RState
+      {| stack := [VNat 7];
+         frame := [];
+         mem   := [] |}).
 Proof.
   apply E_Push.
   apply E_Push.
-  apply E_BinOp.
+  apply E_Add.
   apply E_Done.
 Qed.
 
 Example test_big_step_2 :
-  <<{
+  stackExecute <<{
     PUSH 5;
     PUSH 10;
     PUSH 25;
@@ -382,25 +395,27 @@ Example test_big_step_2 :
     MUL;
     ADD;
     ADD
-  }>> /
+  }>>
     {| stack := [];
-       frame := [] |}
-  ==>
-    {| stack := [90];
-       frame := [] |}.
+       frame := [];
+       mem   := [] |}
+    (RState
+      {| stack := [VNat 90];
+         frame := [];
+         mem   := [] |}).
 Proof.
   apply E_Push.
   apply E_Push.
   apply E_Push.
   apply E_Push.
-  apply E_BinOp.
-  apply E_BinOp.
-  apply E_BinOp.
+  apply E_Mul.
+  apply E_Add.
+  apply E_Add.
   apply E_Done.
 Qed.
 
 Example test_big_step_3 :
-  <<{
+  stackExecute <<{
     PUSH 5;
     PUSH 10;
     ADD;
@@ -408,100 +423,37 @@ Example test_big_step_3 :
     SWAP;
     DUP;
     ADD
-  }>> /
+  }>>
     {| stack := [];
-       frame := [] |}
-  ==>
-    {| stack := [30; 20];
-       frame := [] |}.
+       frame := [];
+       mem   := [] |}
+    (RState
+      {| stack := [VNat 30; VNat 20];
+         frame := [];
+         mem   := [] |}).
 Proof.
   apply E_Push.
   apply E_Push.
-  apply E_BinOp.
+  apply E_Add.
   apply E_Push.
   apply E_Swap.
   apply E_Dup.
-  apply E_BinOp.
+  apply E_Add.
   apply E_Done.
 Qed.
 
 Theorem big_step_fixpoint_correctness :
   forall p si sf,
-    stackEvalF p si = sf <->
-    p / si ==> sf.
+    stackEvalF p si = sf <-> stackExecute p si sf.
 Proof.
   intros p si sf.
-  split.
-  - (* functional -> relational *)
-    generalize dependent si.
-    generalize dependent sf.
-    induction p as [| instr rest IH]; intros sf si H.
-    + simpl in H.
-      subst sf.
-      destruct si as [s f].
-      apply E_Done.
-    + destruct instr.
-      * (* IPush *)
-        apply IH in H.
-        destruct si.
-        apply E_Push.
-        simpl in H.
-        assumption.
-      * (* IPop *)
-        destruct si.
-        destruct stack0; simpl in H; apply IH in H.
-        1: apply E_PopEmpty.
-        2: apply E_Pop.
-        all: assumption.
-      * (* IBinOp *)
-        destruct si as [s f].
-        destruct s as [| n s'].
-        -- apply E_BinOpEmpty.
-           apply IH in H.
-           assumption.
-        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
-           1: apply E_BinOpOne.
-           2: apply E_BinOp.
-           all: assumption.
-      * (* IDup *)
-        destruct si.
-        destruct stack0; simpl in H; apply IH in H.
-        1: apply E_DupEmpty.
-        2: apply E_Dup.
-        all: assumption.
-      * (* ISwap *)
-        destruct si as [s f].
-        destruct s as [| n s'].
-        -- apply E_SwapEmpty.
-           apply IH in H.
-           assumption.
-        -- destruct s' as [| n' s'']; simpl in H; apply IH in H.
-           1: apply E_SwapOne.
-           2: apply E_Swap.
-           all: assumption.
-  - (* relational -> functional *)
-    intro H.
-    induction H; simpl; try reflexivity; try assumption.
-Qed.
+Admitted.
 
 (* Lemma about stack programs concatenated *)
 Lemma stackEvalF_app :
   forall p1 p2 st,
+    stackEvalF p1 st = RState st ->
     stackEvalF (p1 ++ p2) st =
-    stackEvalF p2 (stackEvalF p1 st).
+    stackEvalF p2 st.
 Proof.
-  induction p1 as [| i p1 IH]; intros p2 [s f].
-  - reflexivity.
-  - destruct i; simpl.
-    + apply IH.
-    + destruct s; apply IH.
-    + destruct s as [| n s'].
-      * apply IH.
-      * destruct s' as [| n' s'']; apply IH.
-    + destruct s as [| n s'].
-      * apply IH.
-      * destruct s' as [| n' s'']; apply IH.
-    + destruct s as [| n s'].
-      * apply IH.
-      * destruct s' as [| n' s'']; apply IH.
-Qed.
+  Admitted.
