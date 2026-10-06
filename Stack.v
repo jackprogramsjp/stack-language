@@ -4,6 +4,8 @@
 From Coq Require Import Lists.List.
 Import ListNotations.
 
+From SL Require Import ListHelpers.
+
 (* Types *)
 Inductive ty :=
   | TNat
@@ -54,6 +56,7 @@ Inductive stackInstr : Type :=
 
   (* Heap operations *)
   | IAlloc : stackInstr
+  | IAllocConst : nat -> stackInstr
   | ILoad  : stackInstr
   | IStore : stackInstr.
 
@@ -116,6 +119,10 @@ Notation "'SWAP'" := ([ISwap])
 
 Notation "'ALLOC'" := ([IAlloc])
   (in custom stack at level 0).
+
+Notation "'ALLOC_CONST' n" := ([IAllocConst n])
+  (in custom stack at level 10,
+   n constr at level 0).
 
 Notation "'LOAD'" := ([ILoad])
   (in custom stack at level 0).
@@ -220,17 +227,62 @@ Fixpoint stackEvalF
               RStuck SStackUnderflow
           end
 
+      | IAllocConst size =>
+          let a := length st.(mem) in
+          stackEvalF rest
+            {| stack := VRef a :: st.(stack);
+              frame := st.(frame);
+              mem := st.(mem) ++ repeat (VNat 0) size |}
+
       | IAlloc =>
-          (* implement later *)
-          RError EInvalidAddress
+          match st.(stack) with
+          | VNat n :: s' =>
+              let a := length st.(mem) in
+              stackEvalF rest
+                {| stack := VRef a :: s';
+                   frame := st.(frame);
+                   mem := st.(mem) ++ repeat (VNat 0) n |}
+          | _ :: _ =>
+              RStuck STypeMismatch
+          | [] =>
+              RStuck SStackUnderflow
+          end
 
       | ILoad =>
-          (* implement later *)
-          RError EInvalidAddress
+          match st.(stack) with
+          | VRef a :: s' =>
+              match nth_error st.(mem) a with
+              | Some v =>
+                  stackEvalF rest
+                    {| stack := v :: s';
+                      frame := st.(frame);
+                      mem := st.(mem) |}
+              | None => RError EInvalidAddress
+              end
+          | _ :: _ =>
+              RStuck STypeMismatch
+          | [] =>
+              RStuck SStackUnderflow
+          end
 
       | IStore =>
-          (* implement later *)
-          RError EInvalidAddress
+          match st.(stack) with
+          | v :: VRef a :: s' =>
+              match nth_error st.(mem) a with
+              | Some _ =>
+                  stackEvalF rest
+                    {| stack := s';
+                      frame := st.(frame);
+                      mem := update_nth a v st.(mem) |}
+              | None => RError EInvalidAddress
+              end
+          | _ :: _ :: _ =>
+              RStuck STypeMismatch
+          | [_] =>
+              RStuck SStackUnderflow
+          | [] =>
+              RStuck SStackUnderflow
+          end
       end
   end.
 
@@ -363,7 +415,154 @@ Inductive stackExecute :
           {| stack := VNat 0 :: VNat y :: s;
              frame := f;
              mem := h |}
-          (RError EDivByZero).
+          (RError EDivByZero)
+  
+  (* ALLOC_CONST *)
+  | E_AllocConst :
+      forall size rest s f h r,
+        let a := length h in
+        stackExecute rest
+          {| stack := VRef a :: s;
+             frame := f;
+             mem := h ++ repeat (VNat 0) size |}
+          r ->
+        stackExecute (IAllocConst size :: rest)
+          {| stack := s;
+             frame := f;
+             mem := h |}
+          r
+
+  (* ALLOC *)
+  | E_Alloc :
+      forall n rest s f h r,
+        let a := length h in
+        stackExecute rest
+          {| stack := VRef a :: s;
+             frame := f;
+             mem := h ++ repeat (VNat 0) n |}
+          r ->
+        stackExecute (IAlloc :: rest)
+          {| stack := VNat n :: s;
+             frame := f;
+             mem := h |}
+          r
+
+  (* LOAD *)
+  | E_Load :
+      forall a v rest s f h r,
+        nth_error h a = Some v ->
+        stackExecute rest
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+          r ->
+        stackExecute (ILoad :: rest)
+          {| stack := VRef a :: s;
+             frame := f;
+             mem := h |}
+          r
+
+  (* LOAD with invalid heap address *)
+  | E_LoadInvalidAddress :
+      forall a rest s f h,
+        nth_error h a = None ->
+        stackExecute (ILoad :: rest)
+          {| stack := VRef a :: s;
+             frame := f;
+             mem := h |}
+          (RError EInvalidAddress)
+
+  (* STORE *)
+  | E_Store :
+      forall a v old rest s f h r,
+        nth_error h a = Some old ->
+        stackExecute rest
+          {| stack := s;
+             frame := f;
+             mem := update_nth a v h |}
+          r ->
+        stackExecute (IStore :: rest)
+          {| stack := v :: VRef a :: s;
+             frame := f;
+             mem := h |}
+          r
+
+  (* STORE with invalid heap address *)
+  | E_StoreInvalidAddress :
+      forall a v rest s f h,
+        nth_error h a = None ->
+        stackExecute (IStore :: rest)
+          {| stack := v :: VRef a :: s;
+             frame := f;
+             mem := h |}
+          (RError EInvalidAddress)
+  
+
+    (* ALLOC type mismatch *)
+  | E_AllocTypeMismatch :
+      forall v rest s f h,
+        (forall n, v <> VNat n) ->
+        stackExecute (IAlloc :: rest)
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+          (RStuck STypeMismatch)
+
+  (* ALLOC stack underflow *)
+  | E_AllocUnderflow :
+      forall rest f h,
+        stackExecute (IAlloc :: rest)
+          {| stack := [];
+             frame := f;
+             mem := h |}
+          (RStuck SStackUnderflow)
+
+  (* LOAD type mismatch *)
+  | E_LoadTypeMismatch :
+      forall v rest s f h,
+        (forall a, v <> VRef a) ->
+        stackExecute (ILoad :: rest)
+          {| stack := v :: s;
+             frame := f;
+             mem := h |}
+          (RStuck STypeMismatch)
+
+  (* LOAD stack underflow *)
+  | E_LoadUnderflow :
+      forall rest f h,
+        stackExecute (ILoad :: rest)
+          {| stack := [];
+             frame := f;
+             mem := h |}
+          (RStuck SStackUnderflow)
+
+  (* STORE type mismatch: enough operands, but second is not a reference *)
+  | E_StoreTypeMismatch :
+      forall v v2 rest s f h,
+        (forall a, v2 <> VRef a) ->
+        stackExecute (IStore :: rest)
+          {| stack := v :: v2 :: s;
+             frame := f;
+             mem := h |}
+          (RStuck STypeMismatch)
+
+  (* STORE with only one stack value *)
+  | E_StoreUnderflowOne :
+      forall v rest f h,
+        stackExecute (IStore :: rest)
+          {| stack := [v];
+             frame := f;
+             mem := h |}
+          (RStuck SStackUnderflow)
+
+  (* STORE with empty stack *)
+  | E_StoreUnderflowEmpty :
+      forall rest f h,
+        stackExecute (IStore :: rest)
+          {| stack := [];
+             frame := f;
+             mem := h |}
+          (RStuck SStackUnderflow).
 
 (* CoInductive stackExecuteDiverges :
     stackProgram -> vmState -> Prop :=
