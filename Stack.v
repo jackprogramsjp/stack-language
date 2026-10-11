@@ -228,20 +228,20 @@ Fixpoint stackEvalF
           end
 
       | IAllocConst size =>
-          let a := length st.(mem) in
+          let a := length st.(mem) + 1 in
           stackEvalF rest
             {| stack := VRef a :: st.(stack);
               frame := st.(frame);
-              mem := st.(mem) ++ repeat (VNat 0) size |}
+              mem := st.(mem) ++ [VNat size] ++ repeat (VNat 0) size |}
 
       | IAlloc =>
           match st.(stack) with
           | VNat n :: s' =>
-              let a := length st.(mem) in
+              let a := length st.(mem) + 1 in
               stackEvalF rest
                 {| stack := VRef a :: s';
                    frame := st.(frame);
-                   mem := st.(mem) ++ repeat (VNat 0) n |}
+                   mem := st.(mem) ++ [VNat n] ++ repeat (VNat 0) n |}
           | _ :: _ =>
               RStuck STypeMismatch
           | [] =>
@@ -420,31 +420,31 @@ Inductive stackExecute :
   (* ALLOC_CONST *)
   | E_AllocConst :
       forall size rest s f h r,
-        let a := length h in
+        let a := length h + 1 in
         stackExecute rest
           {| stack := VRef a :: s;
-             frame := f;
-             mem := h ++ repeat (VNat 0) size |}
+            frame := f;
+            mem := h ++ [VNat size] ++ repeat (VNat 0) size |}
           r ->
         stackExecute (IAllocConst size :: rest)
           {| stack := s;
-             frame := f;
-             mem := h |}
+            frame := f;
+            mem := h |}
           r
 
   (* ALLOC *)
   | E_Alloc :
       forall n rest s f h r,
-        let a := length h in
+        let a := length h + 1 in
         stackExecute rest
           {| stack := VRef a :: s;
-             frame := f;
-             mem := h ++ repeat (VNat 0) n |}
+            frame := f;
+            mem := h ++ [VNat n] ++ repeat (VNat 0) n |}
           r ->
         stackExecute (IAlloc :: rest)
           {| stack := VNat n :: s;
-             frame := f;
-             mem := h |}
+            frame := f;
+            mem := h |}
           r
 
   (* LOAD *)
