@@ -1,412 +1,166 @@
 From SL Require Import Maps.
-From SL Require Import Stack.
+From SL Require Import ListHelpers.
 From Stdlib Require Import Strings.String.
-From Coq Require Import Lists.List.
+From Stdlib Require Import Lists.List.
+From Stdlib Require Import Arith.PeanoNat.
+From Stdlib Require Import Lia.
 Import ListNotations.
 
 Module Lang.
 
-(* Types for the language *)
+(* Values*)
+
+Inductive value : Type :=
+  | VNat  : nat -> value
+  | VUnit : value
+.
+
+(* Types*)
+
 Inductive ty : Type :=
   | Ty_Nat  : ty
+  | Ty_Unit : ty
 .
 
-(* Terms for the language *)
+(* A location is an index into the store *)
+Definition loc := nat.
+
+(* Store = a list of values... allocation appends. *)
+Definition store := list value.
+
+Definition store_lookup (l : loc) (st : store) : value :=
+  nth l st VUnit.
+
+Definition replace (l : loc) (v : value) (st : store) : store :=
+  update_nth l v st.
+
+Lemma length_replace : forall l v st,
+  length (replace l v st) = length st.
+Proof.
+  intros l v st. unfold replace.
+  generalize dependent l.
+  induction st as [|h t IH]; intros l; destruct l; simpl; auto.
+Qed.
+
+Lemma lookup_replace_eq : forall l v st,
+  l < length st ->
+  store_lookup l (replace l v st) = v.
+Proof.
+  intros l v st. unfold store_lookup, replace.
+  generalize dependent l.
+  induction st as [|h t IH]; intros l Hlen.
+  - inversion Hlen.
+  - destruct l as [|l']; simpl; auto.
+    apply IH. simpl in Hlen. lia.
+Qed.
+
+Lemma lookup_replace_neq : forall l1 l2 v st,
+  l1 <> l2 ->
+  store_lookup l1 (replace l2 v st) = store_lookup l1 st.
+Proof.
+  unfold store_lookup, replace.
+  induction l1 as [|l1' IH]; intros l2 v st Hneq.
+  - destruct st as [|h t].
+    + destruct l2; reflexivity.
+    + destruct l2 as [|l2'].
+      * contradict Hneq. reflexivity.
+      * reflexivity.
+  - destruct st as [|h t].
+    + destruct l2; reflexivity.
+    + destruct l2 as [|l2'].
+      * reflexivity.
+      * simpl. apply IH. congruence.
+Qed.
+
+(* map program variables to locations *)
+Definition env := partial_map loc.
+
+(* Terms *)
+
 Inductive tm : Type :=
-  | tm_nat  : nat -> tm
-  | tm_add  : tm -> tm -> tm
-  | tm_mul  : tm -> tm -> tm
+  | tm_val    : value -> tm
+  | tm_var    : string -> tm
+  | tm_add    : tm -> tm -> tm
+  | tm_mul    : tm -> tm -> tm
+  | tm_letvar : string -> tm -> tm -> tm   (* letvar x = e1 in e2 *)
+  | tm_assign : string -> tm -> tm         (* x := e *)
+  | tm_seq    : tm -> tm -> tm             (* e1 ; e2 *)
 .
 
-(* Value for operational semantics *)
-Inductive value : tm -> Prop :=
-  | v_nat : forall t,
-      value (tm_nat t)
+Definition tm_nat (n : nat) : tm := tm_val (VNat n).
+
+(* Big-step semantics *)
+(* Under environment rho and store st, term e evaluates to value v with final store st' *)
+
+Inductive eval : tm -> env -> store -> value -> store -> Prop :=
+  | E_Val : forall rho st v,
+      eval (tm_val v) rho st v st
+
+  | E_Var : forall rho st x l,
+      rho x = Some l ->
+      l < length st ->
+      eval (tm_var x) rho st (store_lookup l st) st
+
+  | E_Add : forall rho st st1 st2 e1 e2 n1 n2,
+      eval e1 rho st (VNat n1) st1 ->
+      eval e2 rho st1 (VNat n2) st2 ->
+      eval (tm_add e1 e2) rho st (VNat (n1 + n2)) st2
+
+  | E_Mul : forall rho st st1 st2 e1 e2 n1 n2,
+      eval e1 rho st (VNat n1) st1 ->
+      eval e2 rho st1 (VNat n2) st2 ->
+      eval (tm_mul e1 e2) rho st (VNat (n1 * n2)) st2
+
+  | E_LetVar : forall rho st st1 st2 x e1 e2 v1 v2,
+      eval e1 rho st v1 st1 ->
+      eval e2 (update rho x (length st1)) (st1 ++ [v1]) v2 st2 ->
+      eval (tm_letvar x e1 e2) rho st v2 st2
+
+  | E_Assign : forall rho st st1 x e l v,
+      rho x = Some l ->
+      eval e rho st v st1 ->
+      l < length st1 ->
+      eval (tm_assign x e) rho st VUnit (replace l v st1)
+
+  | E_Seq : forall rho st st1 st2 e1 e2 v1 v2,
+      eval e1 rho st v1 st1 ->
+      eval e2 rho st1 v2 st2 ->
+      eval (tm_seq e1 e2) rho st v2 st2
 .
 
-Hint Constructors value : core.
+#[global] Hint Constructors eval : core.
 
-(* Define multi-step reduction *)
+(* Examples*)
 
-Definition relation (X : Type) := X -> X -> Prop.
-
-Inductive multi {X : Type} (R : relation X) : relation X :=
-  | multi_refl : forall (x : X), multi R x x
-  | multi_step : forall (x y z : X),
-                    R x y ->
-                    multi R y z ->
-                    multi R x z.
-
-(*  *)
-
-Theorem multi_R : forall (X : Type) (R : relation X) (x y : X),
-  R x y -> (multi R) x y.
+Example eval_letvar_read :
+  eval (tm_letvar "x" (tm_nat 5) (tm_var "x")) empty [] (VNat 5) [VNat 5].
 Proof.
-  intros X R x y H.
-  apply multi_step with y.
-  - exact H.
-  - apply multi_refl.
+  apply E_LetVar with (v1 := VNat 5) (st1 := []).
+  - apply E_Val.
+  - simpl.
+    apply E_Var with (l := 0).
+    + rewrite update_eq. reflexivity.
+    + simpl. lia.
 Qed.
 
-Theorem multi_trans :
-  forall (X : Type) (R : relation X) (x y z : X),
-    multi R x y ->
-    multi R y z ->
-    multi R x z.
+Example eval_letvar_assign :
+  eval
+    (tm_letvar "x" (tm_nat 5)
+       (tm_seq (tm_assign "x" (tm_nat 7)) (tm_var "x")))
+    empty [] (VNat 7) [VNat 7].
 Proof.
-  intros X R x y z G H.
-  induction G.
-  - (* multi_refl *) exact H.
-  - (* multi_step *)
-    apply multi_step with y.
-    + exact H0.
-    + apply IHG. exact H.
-Qed.
-
-(* Substitution *)
-Fixpoint subst (x : string) (s : tm) (t : tm) : tm :=
-  match t with
-  | tm_nat _ =>
-      t
-  | tm_add t1 t2 =>
-      tm_add (subst x s t1) (subst x s t2)
-  | tm_mul t1 t2 =>
-      tm_mul (subst x s t1) (subst x s t2)
-  end.
-
-(* Substitution as an inductive relation *)
-Inductive substi (s : tm) (x : string) : tm -> tm -> Prop :=
-  | s_nat : forall n,
-      substi s x (tm_nat n) (tm_nat n)
-  | s_add : forall t1 t1' t2 t2',
-      substi s x t1 t1' ->
-      substi s x t2 t2' ->
-      substi s x (tm_add t1 t2) (tm_add t1' t2')
-  | s_mul : forall t1 t1' t2 t2',
-      substi s x t1 t1' ->
-      substi s x t2 t2' ->
-      substi s x (tm_mul t1 t2) (tm_mul t1' t2')
-.
-
-Hint Constructors substi : core.
-
-(* Proof that the relation coincides with the function. *)
-Theorem substi_correct : forall s x t t',
-  subst x s t = t' <-> substi s x t t'.
-Proof.
-  intros s x t.
-  induction t; intros t'; split; intros H.
-  - (* tm_nat, goal: substi *)
-    simpl in H.
-    subst t'.
-    apply s_nat.
-  - (* tm_nat, goal: subst *)
-    simpl.
-    inversion H.
-    reflexivity.
-  - (* tm_add, goal: substi *)
-    simpl in H.
-    subst t'.
-    apply s_add.
-    + apply IHt1.
-      reflexivity.
-    + apply IHt2.
-      reflexivity.
-  - (* tm_add, goal: subst *)
-    simpl.
-    inversion H; subst; simpl.
-    apply IHt1 in H2.
-    apply IHt2 in H4.
-    subst.
-    reflexivity.
-  - (* tm_mul, goal: substi *)
-    simpl in H.
-    subst t'.
-    apply s_mul.
-    + apply IHt1.
-      reflexivity.
-    + apply IHt2.
-      reflexivity.
-  - (* tm_mul, goal: subst *)
-    simpl.
-    inversion H; subst; simpl.
-    apply IHt1 in H2.
-    apply IHt2 in H4.
-    subst.
-    reflexivity.
-Qed.
-
-(* Define small-step semantics relation for the language *)
-Inductive step : tm -> tm -> Prop :=
-  | ST_Mult1 : forall t1 t1' t2,
-    step t1 t1' ->
-    step (tm_mul t1 t2) (tm_mul t1' t2)
-  | ST_Mult2 : forall v1 t2 t2',
-    value v1 ->
-    step t2 t2' ->
-    step (tm_mul v1 t2) (tm_mul v1 t2')
-  | ST_MultNat : forall (n1 n2 : nat),
-    step (tm_mul (tm_nat n1) (tm_nat n2)) (tm_nat (n1 * n2))
-  | ST_Add1 : forall t1 t1' t2,
-    step t1 t1' ->
-    step (tm_add t1 t2) (tm_add t1' t2)
-  | ST_Add2 : forall v1 t2 t2',
-    value v1 ->
-    step t2 t2' ->
-    step (tm_add v1 t2) (tm_add v1 t2')
-  | ST_AddNat : forall (n1 n2 : nat),
-    step (tm_add (tm_nat n1) (tm_nat n2)) (tm_nat (n1 + n2))
-.
-
-Notation multistep := (multi step).
-
-Hint Constructors step : core.
-
-(* One example of natural numbers *)
-
-(* 1 + (2 * 3) = 7 *)
-Example Nat_step_example : exists t,
-  multistep (tm_add (tm_nat 1) (tm_mul (tm_nat 2) (tm_nat 3))) t.
-Proof.
-  exists (tm_nat 7).
-  eapply multi_step.
-  - apply ST_Add2.
-    + apply v_nat.
-    + apply ST_MultNat.
-  - eapply multi_step.
-    + apply ST_AddNat.
-    + apply multi_refl.
-Qed.
-
-(* Define value as a Rocq function *)
-(* Eventually, it will be a Fixpoint! *)
-Definition valuef (t : tm) : bool :=
-  match t with
-  | tm_nat _ => true
-  | tm_add t1 t2 => false
-  | tm_mul t1 t2 => false
-  end.
-
-(* Helper function for checking term is a value *)
-Definition assert (b : bool) (a : option tm) : option tm :=
-  if b then a else None.
-
-(* Operational semantics as a Rocq function *)
-Fixpoint stepf (t : tm) : option tm :=
-  match t with
-  | tm_nat _ => None (* because it is a number value *)
-
-  (* arithmetic operations *)
-  | tm_add t1 t2 =>
-    match stepf t1, stepf t2, t1, t2 with
-      | Some t1', _, _, _ => Some (tm_add t1' t2)
-      | None, Some t2', tm_nat n, _ => Some (tm_add (tm_nat n) t2')
-      | None, None, tm_nat n1, tm_nat n2 => Some (tm_nat (n1 + n2))
-      | _, _, _, _ => None
-    end
-  | tm_mul t1 t2 =>
-    match stepf t1, stepf t2, t1, t2 with
-      | Some t1', _, _, _ => Some (tm_mul t1' t2)
-      | None, Some t2', tm_nat n, _ => Some (tm_mul (tm_nat n) t2')
-      | None, None, tm_nat n1, tm_nat n2 => Some (tm_nat (n1 * n2))
-      | _, _, _, _ => None
-    end
-  end.
-
-(* Inversion lemma *)
-(* Lemma stepf_none_inv :
-  forall t,
-    stepf t = None ->
-    exists n, t = tm_nat n.
-Proof.
-  intros t H.
-  induction t as [n' | | ].
-  - (* tm_nat n *)
-    exists n'.
-    reflexivity.
-  - (* tm_add t1 t2 *)
-    simpl in H.
-    destruct (stepf t1) eqn:H1.
-    + (* t1 takes a step *)
-      discriminate H.
-    + (* t1 does not take a step *)
-      destruct H1 as [n1 ->].
-      destruct (stepf t2) eqn:H2.
-      * (* t2 takes a step *)
-        
-Qed. *)
-
-(* Prove that small-step evaluation and small-step relation coincides *)
-
-Theorem small_step_fixpoint_correctness :
-  forall t t',
-    stepf t = Some t' <-> step t t'.
-Proof.
-  intros t t'.
-  split.
-  - (* functional -> relation *)
-    generalize dependent t'.
-    induction t; intros t' H.
-    + (* tm_nat *)
-      simpl in H.
-      inversion H.
-    + (* tm_add *)
-      destruct (stepf t1) eqn:H1.
-      
-      * (* t1 takes a step *)
-        simpl in H.
-        rewrite H1 in H.
-        inversion H.
-        apply ST_Add1.
-        apply IHt1.
-        reflexivity.
-      * (* t1 does not take a step *)
-        simpl in H.
-        rewrite H1 in H.
-        destruct (stepf t2) eqn:H2.
-        -- (* t2 takes a step *)
-           destruct t1 as [n1 | t11 t12 | t11 t12].
-           ++ (* t1 = tm_nat n1 *)
-              inversion H.
-              apply ST_Add2.
-              ** apply v_nat.
-              ** apply IHt2. reflexivity.
-           ++ (* t1 = tm_add ... *)
-              discriminate H.
-           ++ (* t1 = tm_mul ... *)
-              discriminate H.
-        -- (* neither t1 nor t2 steps *)
-           destruct t1 as [n1 | | ]; destruct t2 as [n2 | | ];
-           simpl in H; try discriminate H.
-           injection H as H; subst t'.
-           apply ST_AddNat. 
-    + (* tm_add *)
-      destruct (stepf t1) eqn:H1.
-      
-      * (* t1 takes a step *)
-        simpl in H.
-        rewrite H1 in H.
-        inversion H.
-        apply ST_Mult1.
-        apply IHt1.
-        reflexivity.
-      * (* t1 does not take a step *)
-        simpl in H.
-        rewrite H1 in H.
-        destruct (stepf t2) eqn:H2.
-        -- (* t2 takes a step *)
-           destruct t1 as [n1 | t11 t12 | t11 t12].
-           ++ (* t1 = tm_nat n1 *)
-              inversion H.
-              apply ST_Mult2.
-              ** apply v_nat.
-              ** apply IHt2. reflexivity.
-           ++ (* t1 = tm_add ... *)
-              discriminate H.
-           ++ (* t1 = tm_mul ... *)
-              discriminate H.
-        -- (* neither t1 nor t2 steps *)
-           destruct t1 as [n1 | | ]; destruct t2 as [n2 | | ];
-           simpl in H; try discriminate H.
-           injection H as H; subst t'.
-           apply ST_MultNat. 
-  - (* relation -> functional *)
-    intro H.
-    induction H; simpl; try reflexivity;
-    try rewrite IHstep; try reflexivity;
-    inversion H; subst; simpl; reflexivity.
-Qed.
-
-(* Compilation from Language to Stack instructions *)
-Fixpoint compile (t : tm) : stackProgram :=
-  match t with
-  | tm_nat n => [IPush n]
-  | tm_add t1 t2 => compile t1 ++ compile t2 ++ [IAdd]
-  | tm_mul t1 t2 => compile t1 ++ compile t2 ++ [IMul]
-  end.
-
-(* Lemma, proving that one source step does not change the compiled behavior *)
-Lemma compile_step_preservation :
-  forall t t',
-    step t t' ->
-    forall st,
-      stackEvalF (compile t) st =
-      stackEvalF (compile t') st.
-Proof.
-  intros t t' H.
-  induction H; intros st.
-  - (* ST_Mult1 *)
-    simpl.
-    rewrite stackEvalF_app. (* Can definitely do repeat rewrite as well *)
-    rewrite IHstep.
-    rewrite <- stackEvalF_app.
-    reflexivity.
-  - (* ST_Mult2 *)
-    simpl.
-    repeat rewrite stackEvalF_app.
-    rewrite IHstep.
-    reflexivity.
-  - (* ST_MultNat *)
-    simpl.
-    rewrite PeanoNat.Nat.mul_comm.
-    reflexivity.
-  - (* ST_Add1 *)
-    simpl.
-    rewrite stackEvalF_app. (* Can definitely do repeat rewrite as well *)
-    rewrite IHstep.
-    rewrite <- stackEvalF_app.
-    reflexivity.
-  - (* ST_Add2 *)
-    simpl.
-    repeat rewrite stackEvalF_app.
-    rewrite IHstep.
-    reflexivity.
-  - (* ST_AddNat *)
-    simpl.
-    rewrite PeanoNat.Nat.add_comm.
-    reflexivity.
-Qed.
-
-(* (2 * 3) --> 6 *)
-Example compile_step_example :
-  stackEvalF
-    (compile (tm_mul (tm_nat 2) (tm_nat 3)))
-    {| stack := []; frame := [] |}
-  =
-  stackEvalF
-    (compile (tm_nat 6))
-    {| stack := []; frame := [] |}.
-Proof.
-  apply compile_step_preservation.
-  apply ST_MultNat.
-Qed.
-
-Lemma compile_multistep_preservation :
-  forall t t',
-    multistep t t' ->
-    forall st,
-      stackEvalF (compile t) st =
-      stackEvalF (compile t') st.
-Proof.
-  intros t t' H.
-  induction H as [x | x y z Hxy Hyz IH].
-  - reflexivity.
-  - intros st.
-    rewrite <- IH.
-    apply compile_step_preservation.
-    assumption.
-Qed.
-
-Theorem compiler_semantic_preservation :
-  forall t n,
-    multistep t (tm_nat n) ->
-    forall st,
-      stackEvalF (compile t) st =
-      stackEvalF [IPush n] st.
-Proof.
-  intros t n H st.
-  rewrite (compile_multistep_preservation t (tm_nat n) H st).
-  reflexivity.
+  apply E_LetVar with (v1 := VNat 5) (st1 := []).
+  - apply E_Val.
+  - simpl.
+    eapply E_Seq.
+    + apply E_Assign with (l := 0) (v := VNat 7).
+      * rewrite update_eq. reflexivity.
+      * apply E_Val.
+      * simpl. lia.
+    + unfold replace. simpl.
+      apply E_Var with (l := 0).
+      * rewrite update_eq. reflexivity.
+      * simpl. lia.
 Qed.
 
 End Lang.
