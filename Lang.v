@@ -37,20 +37,25 @@ Definition replace (l : loc) (v : value) (st : store) : store :=
 Lemma length_replace : forall l v st,
   length (replace l v st) = length st.
 Proof.
-  intros l v st. unfold replace.
+  intros l v st.
+  unfold replace.
   generalize dependent l.
-  induction st as [|h t IH]; intros l; destruct l; simpl; auto.
+  induction st as [ | h t IH]; intros l.
+  - destruct l. reflexivity. reflexivity.
+  - destruct l. reflexivity.
+    simpl. rewrite IH. reflexivity.
 Qed.
 
 Lemma lookup_replace_eq : forall l v st,
   l < length st ->
   store_lookup l (replace l v st) = v.
 Proof.
-  intros l v st. unfold store_lookup, replace.
+  intros l v st.
+  unfold store_lookup, replace.
   generalize dependent l.
-  induction st as [|h t IH]; intros l Hlen.
+  induction st as [ | h t IH]; intros l Hlen.
   - inversion Hlen.
-  - destruct l as [|l']; simpl; auto.
+  - destruct l as [ | l']; simpl; auto.
     apply IH. simpl in Hlen. lia.
 Qed.
 
@@ -63,13 +68,19 @@ Proof.
   - destruct st as [|h t].
     + destruct l2; reflexivity.
     + destruct l2 as [|l2'].
-      * contradict Hneq. reflexivity.
+      * contradiction Hneq. reflexivity.
       * reflexivity.
   - destruct st as [|h t].
     + destruct l2; reflexivity.
     + destruct l2 as [|l2'].
       * reflexivity.
-      * simpl. apply IH. congruence.
+      * simpl.
+        apply IH.
+        congruence.
+        (* intro Heq.
+        apply Hneq.
+        rewrite Heq.
+        reflexivity. *)
 Qed.
 
 (* map program variables to locations *)
